@@ -19,6 +19,7 @@ export interface Distributor {
   email: string;
   website: string;
   schedule: string;
+  tipo: string;
   extra: string;
   sourcePage: string;
 }
@@ -115,9 +116,6 @@ function extractFromElementorLoopItems(
     if (!city) city = ciudadFromClass;
     if (!tipo) tipo = tipoFromClass;
 
-    const extras: string[] = [];
-    if (tipo) extras.push(`Tipo: ${tipo}`);
-
     items.push({
       name,
       address,
@@ -127,7 +125,8 @@ function extractFromElementorLoopItems(
       email: '',
       website: '',
       schedule: '',
-      extra: extras.join(' | '),
+      tipo,
+      extra: '',
       sourcePage: pageUrl,
     });
   });
@@ -211,7 +210,6 @@ function extractFromDataCards(
 
     const extras: string[] = [];
     if (subName && subName !== name) extras.push(subName);
-    if (tipo) extras.push(`Tipo: ${tipo}`);
     if (mapsLink) extras.push(mapsLink);
 
     items.push({
@@ -223,6 +221,7 @@ function extractFromDataCards(
       email,
       website: '',
       schedule,
+      tipo,
       extra: extras.join(' | '),
       sourcePage: pageUrl,
     });
@@ -271,6 +270,7 @@ function extractDistributors(
         email: emails.join(', '),
         website: '',
         schedule: '',
+        tipo: '',
         extra: '',
         sourcePage: pageUrl,
       });
@@ -358,6 +358,7 @@ function extractDistributors(
       email,
       website,
       schedule,
+      tipo: '',
       extra: extras.slice(0, 5).join(' | '),
       sourcePage: pageUrl,
     });

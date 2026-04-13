@@ -43,6 +43,7 @@ export function distributorsToXlsx(distributors: Distributor[]): Uint8Array {
     Email: d.email,
     'Sitio web': d.website,
     Horario: d.schedule,
+    'Tipo de distribuidor': d.tipo || '',
     'Info adicional': d.extra,
     'Página fuente': d.sourcePage,
   }));

@@ -279,18 +279,11 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        <th className="px-3 py-2 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                          Nombre
-                        </th>
-                        <th className="px-3 py-2 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                          Teléfono
-                        </th>
-                        <th className="px-3 py-2 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                          Email
-                        </th>
-                        <th className="px-3 py-2 text-left font-medium text-zinc-600 dark:text-zinc-400">
-                          Ciudad
-                        </th>
+                        {['Nombre', 'Dirección', 'Ciudad', 'Departamento', 'Teléfono', 'Email', 'Horario', 'Tipo', 'Info adicional'].map((h) => (
+                          <th key={h} className="px-3 py-2 text-left font-medium text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                            {h}
+                          </th>
+                        ))}
                       </>
                     )}
                   </tr>
@@ -319,18 +312,15 @@ export default function Home() {
                         </>
                       ) : (
                         <>
-                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-200 max-w-xs truncate">
-                            {item.name}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-200 whitespace-nowrap">
-                            {item.phone}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">
-                            {item.email}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">
-                            {item.city}
-                          </td>
+                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-200 max-w-[200px] truncate">{item.name}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 max-w-[180px] truncate">{item.address}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{item.city}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{item.department}</td>
+                          <td className="px-3 py-2 text-zinc-900 dark:text-zinc-200 whitespace-nowrap">{item.phone}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{item.email}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 max-w-[150px] truncate">{item.schedule}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{item.tipo}</td>
+                          <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400 max-w-[150px] truncate">{item.extra}</td>
                         </>
                       )}
                     </tr>
