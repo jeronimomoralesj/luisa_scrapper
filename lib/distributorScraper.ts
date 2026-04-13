@@ -45,6 +45,109 @@ const CARD_SELECTORS = [
 ];
 
 /**
+ * Extract from Agile Store Locator (ASL) plugin via its JSON API or static HTML.
+ * First tries the AJAX endpoint, falls back to parsing `.sl-item` elements.
+ */
+async function extractFromStoreLocatorApi(
+  pageUrl: string,
+  html: string,
+  onLog?: (m: string) => void,
+): Promise<Distributor[]> {
+  // Try to find the ASL AJAX endpoint from the page
+  const remoteMatch = html.match(/ASL_REMOTE\s*=\s*(\{[^}]+\})/);
+  if (remoteMatch) {
+    try {
+      const remote = JSON.parse(remoteMatch[1].replace(/\\\//g, '/'));
+      const ajaxUrl = remote.ajax_url;
+      const nonce = remote.nonce;
+      if (ajaxUrl) {
+        if (onLog) onLog(`🔌 ASL API detectada: ${ajaxUrl}`);
+        const apiUrl = `${ajaxUrl}?action=asl_load_stores&nonce=${nonce}&load_all=1&layout=1`;
+        const res = await fetchPage(apiUrl);
+        const stores = typeof res === 'string' ? JSON.parse(res) : res;
+        if (Array.isArray(stores) && stores.length > 0) {
+          if (onLog) onLog(`📦 ${stores.length} puntos de servicio vía API`);
+          return stores.map((s: Record<string, string>) => ({
+            name: cleanText(s.title) || '',
+            address: cleanText(s.street) || '',
+            city: cleanText(s.city) || '',
+            department: cleanText(s.state) || '',
+            phone: cleanText(s.phone) || '',
+            email: cleanText(s.email) || '',
+            website: cleanText(s.website) || '',
+            schedule: cleanText(s.days_str) || '',
+            tipo: '',
+            extra: '',
+            sourcePage: pageUrl,
+          }));
+        }
+      }
+    } catch (e: any) {
+      if (onLog) onLog(`⚠️ ASL API error: ${e.message}`);
+    }
+  }
+
+  // Fallback: parse .sl-item from HTML
+  const $ = cheerio.load(html);
+  const items: Distributor[] = [];
+  const $cards = $('li.sl-item');
+  if ($cards.length === 0) return items;
+
+  $cards.each((_, el) => {
+    const $el = $(el);
+    const name = cleanText($el.find('.sl-addr-list-title').text());
+    if (!name || name.length < 2) return;
+
+    const addrSpan = $el.find('.sl-addr span');
+    const addrHtml = addrSpan.html() || '';
+    const addrParts = addrHtml.split(/<br\s*\/?>/i).map((p) => cleanText(p.replace(/<[^>]+>/g, '')));
+    const address = addrParts[0] || '';
+    const locationLine = addrParts[1] || '';
+    let city = '';
+    let department = '';
+    if (locationLine.includes(',')) {
+      const parts = locationLine.split(',').map((s) => s.trim());
+      city = parts[0];
+      department = parts.slice(1).join(', ');
+    } else {
+      city = locationLine;
+    }
+
+    const phoneLinks: string[] = [];
+    $el.find('.sl-phone a[href^="tel:"]').each((__, a) => {
+      const t = cleanText($(a).text());
+      if (t) phoneLinks.push(t);
+    });
+
+    const emailLinks: string[] = [];
+    $el.find('.sl-email a[href^="mailto:"]').each((__, a) => {
+      const t = cleanText($(a).text());
+      if (t) emailLinks.push(t);
+    });
+
+    const hours = cleanText($el.find('.sl-hours .txt-hours').text());
+    const days = cleanText($el.find('.sl-days .txt-hours').text());
+    const website = $el.find('.s-visit-website').attr('href') || '';
+
+    items.push({
+      name,
+      address,
+      city,
+      department,
+      phone: phoneLinks.join(', '),
+      email: emailLinks.join(', '),
+      website,
+      schedule: [hours, days].filter(Boolean).join(' | '),
+      tipo: '',
+      extra: '',
+      sourcePage: pageUrl,
+    });
+  });
+
+  return items;
+}
+
+/**
  * Extract distributors from Elementor loop items (e.g. reencafe.com).
  * Each `.e-loop-item` has CSS classes like `departamento-*`, `ciudad-*`, `tipo_de_distribuidor-*`.
  * Data is in sequential text-editor widgets after bold labels.
@@ -230,11 +333,21 @@ function extractFromDataCards(
   return items;
 }
 
-function extractDistributors(
+async function extractDistributors(
   $: cheerio.CheerioAPI,
   pageUrl: string,
-): Distributor[] {
-  // Try Elementor loop items first (e.g. reencafe.com)
+  html: string,
+  onProgress: OnProgress,
+): Promise<Distributor[]> {
+  // Try Agile Store Locator via API (e.g. interllantas.com/puntos-de-servicio)
+  if (html.includes('ASL_REMOTE') || html.includes('asl_locator') || html.includes('sl-item')) {
+    const aslItems = await extractFromStoreLocatorApi(pageUrl, html, (m) =>
+      onProgress({ type: 'log', message: m }),
+    );
+    if (aslItems.length > 0) return aslItems;
+  }
+
+  // Try Elementor loop items (e.g. reencafe.com)
   const elementorItems = extractFromElementorLoopItems($, pageUrl);
   if (elementorItems.length > 0) return elementorItems;
 
@@ -468,7 +581,7 @@ export async function scrapeDistributors(
     try {
       const html = url === startUrl ? firstHtml : await fetchPage(url);
       const $ = cheerio.load(html);
-      const items = extractDistributors($, url);
+      const items = await extractDistributors($, url, html, onProgress);
       let added = 0;
       for (const d of items) {
         if (maxItems && all.length >= maxItems) break;
