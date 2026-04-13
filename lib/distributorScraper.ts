@@ -43,13 +43,113 @@ const CARD_SELECTORS = [
   'tr',
 ];
 
-function extractDistributors(
+/**
+ * Extract distributors from data-attribute cards (e.g. tiendaredllantas.co).
+ * Each `.divDis` has data-nombres, data-departamento, data-ciudad, data-tipo.
+ */
+function extractFromDataCards(
   $: cheerio.CheerioAPI,
   pageUrl: string,
 ): Distributor[] {
   const items: Distributor[] = [];
+  const $cards = $('.divDis, [data-nombres]');
+  if ($cards.length === 0) return items;
 
-  // First try: structured cards
+  $cards.each((_, el) => {
+    const $el = $(el);
+
+    // Name: prefer data-razon (trade name) if present, else data-nombres, else h5
+    const razon = cleanText($el.attr('data-razon') || '');
+    const nombres = cleanText($el.attr('data-nombres') || '');
+    const h5Name = cleanText($el.find('h5').first().text());
+    const name = razon || nombres || h5Name;
+    if (!name || name.length < 2) return;
+
+    const department = cleanText($el.attr('data-departamento') || '');
+    const city = cleanText($el.attr('data-ciudad') || '');
+    const tipo = cleanText($el.attr('data-tipo') || '');
+
+    // Address: first .shop-item-code paragraph (the street)
+    const $codes = $el.find('.shop-item-code');
+    const address = cleanText($codes.eq(0).text()) || '';
+
+    // Location line: "DEPARTAMENTO - CIUDAD" (second .shop-item-code)
+    // Already extracted from data attributes, skip this
+
+    // Schedule: text after "Horarios de atención:"
+    let schedule = '';
+    $el.find('b').each((__, b) => {
+      if ($(b).text().includes('Horarios')) {
+        const nextP = $(b).next('p');
+        if (nextP.length) schedule = cleanText(nextP.text());
+      }
+    });
+
+    // Phone: text inside .shop-item-code after "Teléfonos:" bold
+    let phone = '';
+    $el.find('b').each((__, b) => {
+      if ($(b).text().includes('Teléfono') || $(b).text().includes('Telefono')) {
+        const nextP = $(b).next('p.shop-item-code');
+        if (nextP.length) {
+          phone = cleanText(nextP.text())
+            .replace(/^-\s*/, '')
+            .replace(/\s*-\s*$/, '')
+            .replace(/\s*-\s*-\s*/g, ', ')
+            .replace(/\s*-\s*/g, ', ')
+            .replace(/,\s*,/g, ',')
+            .replace(/,\s*$/, '')
+            .trim();
+        }
+      }
+    });
+
+    // Email: inside .shop-three-products-price
+    const emailRaw = cleanText($el.find('.shop-three-products-price').text());
+    const email = emailRaw
+      .split(/[,;]\s*/)
+      .map((e) => e.trim())
+      .filter((e) => e.includes('@'))
+      .join(', ');
+
+    // Google Maps link
+    const mapsLink = $el.find('a[href*="google.com/maps"]').attr('href') || '';
+
+    // Sub-name (razón social shown as <b>)
+    const subName = cleanText($el.find('b.shop-three-products-name').text());
+
+    const extras: string[] = [];
+    if (subName && subName !== name) extras.push(subName);
+    if (tipo) extras.push(`Tipo: ${tipo}`);
+    if (mapsLink) extras.push(mapsLink);
+
+    items.push({
+      name,
+      address,
+      city,
+      department,
+      phone,
+      email,
+      website: '',
+      schedule,
+      extra: extras.join(' | '),
+      sourcePage: pageUrl,
+    });
+  });
+
+  return items;
+}
+
+function extractDistributors(
+  $: cheerio.CheerioAPI,
+  pageUrl: string,
+): Distributor[] {
+  // Try site-specific data-attribute cards first
+  const dataItems = extractFromDataCards($, pageUrl);
+  if (dataItems.length > 0) return dataItems;
+
+  const items: Distributor[] = [];
+
+  // Generic card-based extraction
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let $cards: cheerio.Cheerio<any> = $([]);
   for (const sel of CARD_SELECTORS) {
