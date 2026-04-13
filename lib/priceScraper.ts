@@ -94,18 +94,56 @@ function extractFromWooCommerce($: cheerio.CheerioAPI, pageUrl: string): Product
     const name = cleanText($el.find('.woocommerce-loop-product__title, h2.product-title, h3.product-title, h2, h3').first().text());
     if (!name) return;
 
+    // Price extraction: handle macrollantas "Precio Público" / "Valor" pattern
+    const $valorDiv = $el.find('.precio.valor .woocommerce-Price-amount');
+    const $publicoDiv = $el.find('.precio.public .woocommerce-Price-amount');
     const $ins = $el.find('.price ins .woocommerce-Price-amount');
-    const priceRaw = $ins.length ? cleanText($ins.text()) : cleanText($el.find('.price .woocommerce-Price-amount, .woocommerce-Price-amount, [class*="price"]').first().text());
-    const oldRaw = cleanText($el.find('.price del .woocommerce-Price-amount, del .amount').first().text());
+    let priceRaw: string;
+    let oldRaw: string;
+    if ($valorDiv.length) {
+      // macrollantas pattern: "Valor" is current, "Precio Público" is old
+      priceRaw = cleanText($valorDiv.first().text());
+      oldRaw = $publicoDiv.length ? cleanText($publicoDiv.first().text()) : '';
+    } else if ($ins.length) {
+      priceRaw = cleanText($ins.text());
+      oldRaw = cleanText($el.find('.price del .woocommerce-Price-amount, del .amount').first().text());
+    } else {
+      priceRaw = cleanText($el.find('.price .woocommerce-Price-amount, .woocommerce-Price-amount, [class*="price"]').first().text());
+      oldRaw = cleanText($el.find('.price del .woocommerce-Price-amount, del .amount').first().text());
+    }
 
-    const img = $el.find('img').first();
+    // Product image (skip brand logos)
+    const productImg = $el.find('img.attachment-woocommerce_thumbnail, img.wp-post-image, img[src*="product"]').first();
+    const img = productImg.length ? productImg : $el.find('img').not('.marcaImagen').first();
+
+    // Brand: try text, then brand logo alt, then filename
+    let brand = cleanText($el.find('[class*="brand"]').not('.marca').first().text());
+    if (!brand) {
+      const brandImg = $el.find('img.marcaImagen, .marca img').first();
+      const brandAlt = cleanText(brandImg.attr('alt') || '');
+      if (brandAlt) {
+        brand = brandAlt.replace(/^llantas?\s*/i, '').replace(/\s*llantas?$/i, '');
+      } else {
+        // Extract brand from image filename: Logo-Dunlop-llantas.png -> Dunlop
+        const src = brandImg.attr('src') || '';
+        const fname = src.split('/').pop()?.split('.')[0] || '';
+        const cleaned = fname
+          .replace(/[-_]?logo[-_]?/gi, ' ').replace(/[-_]?Logo[-_]?/g, ' ')
+          .replace(/[-_\s]*macrollantas/i, '').replace(/[-_\s]*llantas/i, '')
+          .replace(/[-_\s]*eyd/i, '') // random prefixes
+          .replace(/[-_]?\d+$/g, '')
+          .replace(/[-_]/g, ' ').trim();
+        if (cleaned.length > 1 && cleaned.length < 30) brand = cleaned;
+      }
+    }
+
     items.push({
       name,
       price: extractPrice(priceRaw),
       oldPrice: extractPrice(oldRaw),
       currency: cleanText($el.find('.woocommerce-Price-currencySymbol').first().text()) || '$',
       sku: cleanText($el.find('.sku, [class*="sku"]').first().text()),
-      brand: cleanText($el.find('[class*="brand"], [class*="marca"]').first().text()),
+      brand,
       category: cleanText($el.find('[class*="category"], [class*="categoria"]').first().text()),
       badge: cleanText($el.find('.onsale, [class*="badge"], [class*="sale-tag"]').first().text()),
       link: resolveUrl($el.find('a').first().attr('href'), pageUrl) || '',
