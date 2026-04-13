@@ -9,14 +9,81 @@ export interface Product {
 
 type OnProgress = (evt: object) => void;
 
-const CARD_SELECTORS = ['li.product', '.product-item', 'article.product', '.woocommerce-loop-product', '.product-grid-item', '.product-card'];
-
 function extractPrice(s: string) {
   const m = s.replace(/\./g, '').replace(/,/g, '.').match(/\d+(?:\.\d+)?/);
   return m ? m[0] : '';
 }
 
-function extractProducts($: cheerio.CheerioAPI, pageUrl: string): Product[] {
+/**
+ * Extract products from GTM data attributes (e.g. virtualllantas.com).
+ * Links with .gtm_product_click have data-name, data-price, data-brand, data-sku, data-category.
+ */
+function extractFromGtmLinks($: cheerio.CheerioAPI, pageUrl: string): Product[] {
+  const items: Product[] = [];
+  const seen = new Set<string>();
+
+  $('a.gtm_product_click[data-name][data-price]').each((_, el) => {
+    const $a = $(el);
+    const dataName = cleanText($a.attr('data-name') || '');
+    const dataBrand = cleanText($a.attr('data-brand') || '');
+    const dataSku = cleanText($a.attr('data-sku') || '');
+    const dataPrice = $a.attr('data-price') || '';
+    const dataCategory = cleanText($a.attr('data-category') || '');
+    const href = resolveUrl($a.attr('href'), pageUrl) || '';
+
+    // Deduplicate by SKU or name (multiple links per product)
+    const key = dataSku || dataName;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+
+    const name = dataBrand ? `${dataBrand} ${dataName}` : dataName;
+    if (!name) return;
+
+    // Find the product card container to extract prices and image
+    const $card = $a.closest('.llanta, .contorno_llanta, .recommend-contenedor, .columnas').first();
+    const $priceBlock = $card.length ? $card : $a.parent().parent();
+
+    // Current price: .despues text (sale price)
+    const despues = cleanText($priceBlock.find('.despues').first().text());
+    // Old price: strike inside .antes
+    const antes = cleanText($priceBlock.find('.antes strike, strike').first().text());
+
+    const currentPrice = extractPrice(despues) || extractPrice(dataPrice);
+    const oldPrice = extractPrice(antes);
+
+    // Image
+    const img = $card.find('img.figure-result, img[src*="catalog/product"]').first();
+    const image = img.attr('data-src') || img.attr('src') || '';
+
+    // Badge (discount %)
+    const badge = cleanText($card.find('.etiqueta_descuento .busqueda').first().text());
+
+    items.push({
+      name,
+      price: currentPrice,
+      oldPrice,
+      currency: '$',
+      sku: dataSku,
+      brand: dataBrand,
+      category: dataCategory,
+      badge: badge ? `${badge} DCTO` : '',
+      link: href,
+      image,
+      sourcePage: pageUrl,
+    });
+  });
+
+  return items;
+}
+
+/**
+ * Extract products from WooCommerce-style product cards.
+ */
+function extractFromWooCommerce($: cheerio.CheerioAPI, pageUrl: string): Product[] {
+  const CARD_SELECTORS = [
+    'li.product', '.product-item', 'article.product',
+    '.woocommerce-loop-product', '.product-grid-item', '.product-card',
+  ];
   const items: Product[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let $cards: cheerio.Cheerio<any> = $([]);
@@ -47,6 +114,71 @@ function extractProducts($: cheerio.CheerioAPI, pageUrl: string): Product[] {
     });
   });
   return items;
+}
+
+/**
+ * Generic fallback: find any repeated elements with an h3/h4 title and a price-like text.
+ */
+function extractGenericProducts($: cheerio.CheerioAPI, pageUrl: string): Product[] {
+  const items: Product[] = [];
+  const GENERIC_SELECTORS = [
+    '.llanta', '.contorno_llanta', '.product-card', '.product-item',
+    '.card', 'article', '.item',
+  ];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let $cards: cheerio.Cheerio<any> = $([]);
+  for (const sel of GENERIC_SELECTORS) {
+    const f = $(sel);
+    if (f.length >= 2) { $cards = f; break; }
+  }
+  if ($cards.length === 0) return items;
+
+  $cards.each((_, el) => {
+    const $el = $(el);
+    const name = cleanText($el.find('h2, h3, h4, .title, [class*="title"]').first().text());
+    if (!name || name.length < 3) return;
+
+    const text = $el.text();
+    // Try to find a price pattern like $1.234.567 or $1234567
+    const priceMatch = text.match(/\$\s*([\d.,]+)/);
+    const price = priceMatch ? extractPrice(priceMatch[1]) : '';
+
+    const oldMatch = $el.find('strike, del, .old-price, .antes').first().text();
+    const oldPrice = oldMatch ? extractPrice(oldMatch) : '';
+
+    const link = resolveUrl($el.find('a[href]').first().attr('href'), pageUrl) || '';
+    const img = $el.find('img').first();
+
+    if (price || link) {
+      items.push({
+        name,
+        price,
+        oldPrice,
+        currency: '$',
+        sku: '',
+        brand: '',
+        category: '',
+        badge: '',
+        link,
+        image: img.attr('data-src') || img.attr('src') || '',
+        sourcePage: pageUrl,
+      });
+    }
+  });
+  return items;
+}
+
+function extractProducts($: cheerio.CheerioAPI, pageUrl: string): Product[] {
+  // 1. Try GTM data attributes (virtualllantas.com and similar)
+  const gtmItems = extractFromGtmLinks($, pageUrl);
+  if (gtmItems.length > 0) return gtmItems;
+
+  // 2. Try WooCommerce selectors
+  const wooItems = extractFromWooCommerce($, pageUrl);
+  if (wooItems.length > 0) return wooItems;
+
+  // 3. Generic fallback
+  return extractGenericProducts($, pageUrl);
 }
 
 export async function scrapePrices(startUrl: string, onProgress: OnProgress, signal?: AbortSignal, maxItems?: number): Promise<Product[]> {
