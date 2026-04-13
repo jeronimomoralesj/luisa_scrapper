@@ -44,6 +44,98 @@ const CARD_SELECTORS = [
 ];
 
 /**
+ * Extract distributors from Elementor loop items (e.g. reencafe.com).
+ * Each `.e-loop-item` has CSS classes like `departamento-*`, `ciudad-*`, `tipo_de_distribuidor-*`.
+ * Data is in sequential text-editor widgets after bold labels.
+ */
+function extractFromElementorLoopItems(
+  $: cheerio.CheerioAPI,
+  pageUrl: string,
+): Distributor[] {
+  const items: Distributor[] = [];
+  const $cards = $('.e-loop-item');
+  if ($cards.length === 0) return items;
+
+  $cards.each((_, el) => {
+    const $el = $(el);
+    const classes = $el.attr('class') || '';
+
+    // Name from .elementor-heading-title
+    const name = cleanText($el.find('.elementor-heading-title').first().text());
+    if (!name || name.length < 2) return;
+
+    // Address: first list item with map-marker icon
+    const $listItems = $el.find('.elementor-icon-list-item');
+    const address = cleanText($listItems.eq(0).find('.elementor-icon-list-text').text()) || '';
+
+    // Phone: second list item with phone icon
+    let phone = cleanText($listItems.eq(1).find('.elementor-icon-list-text').text()) || '';
+    phone = phone.replace(/^-\s*/, '').replace(/\s*-\s*$/, '').trim();
+
+    // Extract tipo, departamento, ciudad from CSS classes
+    const tipoMatch = classes.match(/tipo_de_distribuidor-([\w-]+)/);
+    const deptMatch = classes.match(/departamento-([\w-]+)/);
+    const ciudadMatch = classes.match(/ciudad-([\w-]+)/);
+
+    const tipoFromClass = tipoMatch
+      ? tipoMatch[1].replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+      : '';
+    const deptFromClass = deptMatch
+      ? deptMatch[1].replace(/-/g, ' ').toUpperCase()
+      : '';
+    const ciudadFromClass = ciudadMatch
+      ? ciudadMatch[1].replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+      : '';
+
+    // Also try to read from the text-editor widgets (more accurate)
+    let tipo = '';
+    let department = '';
+    let city = '';
+    const $widgets = $el.find('.elementor-widget-text-editor');
+    $widgets.each((__, w) => {
+      const $w = $(w);
+      const strong = cleanText($w.find('strong').text());
+      if (strong.includes('Tipo')) {
+        // The next sibling widget has the value
+        const nextWidget = $w.next('.elementor-widget-text-editor');
+        if (nextWidget.length) tipo = cleanText(nextWidget.find('span').text() || nextWidget.text());
+      } else if (strong.includes('Ubicación')) {
+        // Next two sibling widgets: department, then city
+        const deptWidget = $w.next('.elementor-widget-text-editor');
+        if (deptWidget.length) {
+          department = cleanText(deptWidget.find('span').text() || deptWidget.text());
+          const cityWidget = deptWidget.next('.elementor-widget-text-editor');
+          if (cityWidget.length) city = cleanText(cityWidget.find('span').text() || cityWidget.text());
+        }
+      }
+    });
+
+    // Fallback to CSS class values
+    if (!department) department = deptFromClass;
+    if (!city) city = ciudadFromClass;
+    if (!tipo) tipo = tipoFromClass;
+
+    const extras: string[] = [];
+    if (tipo) extras.push(`Tipo: ${tipo}`);
+
+    items.push({
+      name,
+      address,
+      city,
+      department,
+      phone,
+      email: '',
+      website: '',
+      schedule: '',
+      extra: extras.join(' | '),
+      sourcePage: pageUrl,
+    });
+  });
+
+  return items;
+}
+
+/**
  * Extract distributors from data-attribute cards (e.g. tiendaredllantas.co).
  * Each `.divDis` has data-nombres, data-departamento, data-ciudad, data-tipo.
  */
@@ -143,7 +235,11 @@ function extractDistributors(
   $: cheerio.CheerioAPI,
   pageUrl: string,
 ): Distributor[] {
-  // Try site-specific data-attribute cards first
+  // Try Elementor loop items first (e.g. reencafe.com)
+  const elementorItems = extractFromElementorLoopItems($, pageUrl);
+  if (elementorItems.length > 0) return elementorItems;
+
+  // Try site-specific data-attribute cards (e.g. tiendaredllantas.co)
   const dataItems = extractFromDataCards($, pageUrl);
   if (dataItems.length > 0) return dataItems;
 
